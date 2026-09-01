@@ -10,7 +10,7 @@
 # and the `tests/guard.rs` closure assertions can't go red for a reason that
 # has nothing to do with this crate. (So: NO `Cargo.lock` entry here.)
 
-# --- Lean (formal/, lands in C2) ---
+# --- Lean (formal/) ---
 .lake/
 formal/.lake/
 

@@ -1,12 +1,16 @@
 # justfile for precedence-ladder.
 #
-# `just check` runs the full local gate (fmt + clippy + test + doc + leaf), the
-# same steps enforced by .githooks/pre-push and .github/workflows/ci.yml. The
-# CI-only `msrv` (1.88) job is intentionally not in `check` — see the pre-push
-# hook header for the rationale. Run it with `just msrv`.
+# `just check` runs the full local gate (fmt + clippy + test + doc + leaf +
+# no-sorry), the same steps enforced by .githooks/pre-push and
+# .github/workflows/ci.yml. Two checks are intentionally not in `check`, both
+# needing an extra toolchain: `msrv` (1.88) and `lean` (`lake build`). Run them
+# with `just msrv` and `just lean`.
 
-# Run the full local check suite: format, lint, test, doc, leaf guard.
-check: fmt clippy test doc leaf
+# Run the full local check suite: format, lint, test, doc, leaf guard, sorry gate.
+#
+# `lean` is deliberately NOT here — see the `lean` recipe's comment. `no-sorry`
+# is, because it is a grep and it gates a real hole.
+check: fmt clippy test doc leaf no-sorry
 
 # Verify formatting (does not modify files).
 fmt:
@@ -43,6 +47,21 @@ doc:
 # pre-push hook; reads only `cargo metadata`, so it is fast.
 leaf:
     ./scripts/check-leaf-deps.sh
+
+# The `sorry` gate.
+#
+# `lake build` exits 0 on a `sorry`, so without this "sorry-free" would be a
+# human assertion nothing checks. Pure grep — no Lean toolchain needed.
+no-sorry:
+    ./scripts/check-lean-proofs.sh
+
+# Check every Lean theorem.
+#
+# NOT in `just check`: it needs a Lean toolchain (via elan, version pinned in
+# `formal/lean-toolchain`), and requiring a full Lean install of everyone who
+# works on a Rust crate would be disproportionate.
+lean:
+    cd formal && lake build
 
 # Verify the package version declarations agree via the canonical tool, and
 # self-test the SemVer<->PEP 440 mapping. This is the SINGLE source of that

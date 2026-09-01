@@ -1,0 +1,80 @@
+# precedence-ladder — who owns this trigger, right now.
+#
+# This repo is a Cargo workspace whose ONLY member today is the core crate at
+# the repo root. The PyO3 face (`precedence-ladder-py`) lands in slice C3 as a
+# separate, NON-default member, so a plain `cargo build` / `cargo test` never
+# compiles PyO3. When it lands, add it to `members` and leave `default-members`
+# alone.
+[workspace]
+members = []
+default-members = ["."]
+
+[package]
+name = "precedence-ladder"
+version = "0.1.0"
+# FROZEN policy: the edition stays at 2021 and the MSRV floor is 1.88 for the
+# 0.1.x line.
+#
+# NONE of our code needs it. The floor is set entirely by the OPTIONAL `cid`
+# feature's transitive graph: content-addressable -> ipld-core -> cid ->
+# multibase -> base45 3.2, which uses `slice_as_chunks` (stable in 1.88).
+# `cargo build --all-targets --no-default-features` — the bare predicate — is
+# green on 1.85, and would go far lower.
+#
+# We declare 1.88 rather than pin base45 back, because a downstream consumer
+# resolves fresh and ignores our Cargo.lock: a 1.85 that is green only because
+# of OUR lock is a vacuous MSRV claim, not a floor. (Note that
+# content-addressable 0.1.2 itself still declares 1.85, which its committed
+# lock makes true for it and a fresh resolve does not.)
+#
+# A dedicated CI job pins `dtolnay/rust-toolchain@1.88` so a future dependency
+# cannot raise the real floor silently — that job is what caught this one.
+# Bumping the edition or MSRV is an intentional, SemVer-relevant change.
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Who owns this trigger, right now: a pure, dependency-free precedence ladder for keystroke ownership, with an escape hatch that is unrepresentable to override."
+repository = "https://github.com/Gilamonster-Foundation/precedence-ladder"
+keywords = ["keybindings", "precedence", "tui", "interrupt", "keymap"]
+categories = ["command-line-interface", "config", "data-structures"]
+
+[features]
+# The core predicate — `Hatch`/`Rung`/`Ladder`/`ClaimSet`/`Situation`/`Verdict`,
+# `resolve`, `describe`, `collisions`, `claimants` — depends on NOTHING. With
+# `--no-default-features` the resolved dependency closure of this crate is
+# empty, and `tests/guard.rs` asserts exactly that rather than saying it here.
+default = ["table"]
+# `table` is the three-Cs feature: the ladder as a TOML table (`from_toml`)
+# rather than a hardcoded match. On by default because knowledge-as-data is the
+# intended way to use this crate; off for a consumer that builds its ladder in
+# code and wants the empty closure.
+table = ["serde", "dep:toml"]
+# `serde` derives Serialize on the ladder types (and Deserialize on `Rung`).
+# Enabled by both `table` and `cid`, which is why it is a named feature rather
+# than a bare `dep:serde`. NOTE: `Hatch` gets Serialize but deliberately NOT
+# Deserialize — see src/table.rs.
+serde = ["dep:serde"]
+# `cid` mints a ladder's content identity through `content-addressable` (CIDv1 /
+# dag-cbor / BLAKE3). OFF BY DEFAULT: that stack pulls blake3 + ipld-core +
+# serde_ipld_dagcbor, which would make a wasm build of a pure predicate an order
+# of magnitude larger than it should be. CI and the pre-push hook exercise it
+# via `--all-features`.
+cid = ["serde", "dep:content-addressable"]
+
+[dependencies]
+# EVERY runtime dependency here is optional, and `tests/guard.rs` asserts that.
+# A non-optional entry would ship to every consumer including the
+# `--no-default-features` one, and would end the empty-closure claim.
+serde = { version = "1", features = ["derive"], optional = true }
+toml = { version = "0.9", default-features = false, features = [
+    "parse",
+    "serde",
+], optional = true }
+# Identity comes from the crate, never from a hand-rolled digest.
+content-addressable = { version = "0.1.2", optional = true }
+
+# NO dev-dependencies, on purpose. The truth table is pure Rust and the
+# dependency guard shells out to `cargo tree` rather than parsing `cargo
+# metadata` JSON, so the test tier needs nothing the crate does not already
+# have. Adding one is fine — it ships to nobody — but it is worth noticing that
+# none was needed.

@@ -239,9 +239,9 @@ CI cannot see or assert any of these. Confirm before the first `v*` tag:
       General → *Workflow permissions* currently reads **"Read repository
       contents and packages permissions"** on this repo. `github-release` asks
       for `contents: write` explicitly, which normally overrides that default —
-      but this is the one prerequisite whose failure lands *after* the crate is
-      already public, because `publish-crate` and `github-release` run in
-      parallel off the same gate. Verify it (or flip the setting to *Read and
+      but this is the one prerequisite whose failure necessarily lands *after*
+      the crate is already public, since `github-release` runs after
+      `publish-crate` by design. Verify it (or flip the setting to *Read and
       write*) before the first tag rather than discovering it from a tag with no
       Release. If it does bite: fix the setting and re-run the single
       `github-release` job — it is idempotent, and `--verify-tag` means it can

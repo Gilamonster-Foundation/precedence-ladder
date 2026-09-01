@@ -59,7 +59,7 @@ section="$(awk -v want="## [$version]" '
 # miss here becomes a published release with a blank body — and the tag is
 # already pushed by then. Ten lines is well under any real section and well
 # above a heading that matched nothing but itself.
-lines="$(printf '%s\n' "$section" | grep -c '' || true)"
+lines="$(grep -c '' <<<"$section" || true)"
 if [ "$lines" -lt 10 ]; then
   echo "release-notes: CHANGELOG.md has no usable '## [$version]' section" >&2
   echo "(extracted $lines lines). Add the entry before tagging — the release" >&2

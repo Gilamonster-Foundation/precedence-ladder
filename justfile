@@ -136,8 +136,16 @@ release-dryrun tag="":
     just verify-release "{{ tag }}"
     echo
     echo "==> ./scripts/release-notes.sh (the release body)"
-    ./scripts/release-notes.sh "{{ tag }}" | head -3
-    echo "    ... $(./scripts/release-notes.sh "{{ tag }}" | wc -l) lines total"
+    # Captured ONCE, then sliced in the shell. Not `release-notes.sh | head -3`:
+    # `head` closes the pipe after three lines, and under `set -o pipefail` the
+    # writer's SIGPIPE (141) becomes the recipe's exit status — intermittently,
+    # depending on whether the writer finished first, which is the worst kind of
+    # flake. (It bit this recipe on its second run.) Same shape as the two other
+    # instances fixed in this repo; `cmd | head`/`cmd | grep -q` under pipefail
+    # is the bug, not any one file.
+    notes="$(./scripts/release-notes.sh "{{ tag }}")"
+    printf '%s\n' "$notes" | sed -n '1,3p'
+    printf '    ... %s lines total\n' "$(printf '%s\n' "$notes" | wc -l)"
     echo
     echo "==> cargo package --list --locked"
     cargo package --list --locked

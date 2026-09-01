@@ -297,42 +297,17 @@ fn a_rogue_rung_cannot_swallow_the_hatch() {
 /// This is what makes "knowledge as data" more than a slogan: everything the
 /// grid above proves about the constructed ladder holds for the shipped `.toml`
 /// too, because they are the same value.
+///
+/// It is also the join between this file and the formal layer.
+/// `spec/vectors/newt_ladder.toml` is compiled into `examples/gen_vectors.rs`,
+/// which emits `spec/vectors/ladder.json` and the Lean `decide` block from it.
+/// Reading the same file here — rather than keeping a second copy inline — is
+/// what makes "the grid the tests walk" and "the grid the vectors record" the
+/// same claim rather than two that agree today.
 #[cfg(feature = "table")]
 #[test]
 fn the_shipped_toml_is_the_ladder_the_grid_walked() {
-    const SHIPPED: &str = r#"
-schema = 1
-fallthrough = ["esc"]
-
-[hatch]
-action = "interrupt"
-reserved = ["ctrl-c"]
-
-[[rung]]
-claimant = "palette"
-triggers = ["esc"]
-action = "close palette"
-
-[[rung]]
-claimant = "vi-confirm"
-triggers = ["esc"]
-action = "cancel [y/N]"
-
-[[rung]]
-claimant = "vi-ex"
-triggers = ["esc"]
-action = "cancel :"
-
-[[rung]]
-claimant = "vi-insert"
-triggers = ["esc"]
-action = "NORMAL"
-
-[[rung]]
-claimant = "vi-pending"
-triggers = ["esc"]
-action = "cancel operator"
-"#;
+    const SHIPPED: &str = include_str!("../spec/vectors/newt_ladder.toml");
     let parsed = Ladder::from_toml(SHIPPED).expect("the shipped table parses");
     assert_eq!(parsed, newt_ladder());
     assert_eq!(parsed.collisions(), vec![], "the shipped table is clean");

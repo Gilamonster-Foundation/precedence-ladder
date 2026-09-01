@@ -84,7 +84,51 @@ decision.
   hook mirrors the pipeline and each names the other in a parity comment. The
   whole gate is seconds; do not let it grow into a hook people route around.
 
-### Not in C1
+### Added — slice C2: the Lean layer and the golden vectors
 
-The Lean layer and golden vectors (C2); the PyO3/PyPI face, the release
-workflow, and the `0.1.0` publish (C3); the wasm/npm package (C4).
+- **`formal/`** — a Mathlib-free Lean 4 model of `resolve`
+  (`leanprover/lean4:v4.31.0`), with `[[lean_lib]] Precedence` **and**
+  `defaultTargets = ["Precedence"]`. A library missing from `defaultTargets` is
+  not built by `lake build`, which would be a green badge over an unchecked
+  tree.
+- **Four hand-written theorems**, each labelled with what it does *not*
+  establish (`formal/README.md` carries the table):
+  `declining_rung_is_transparent` (**proven** — a declining rung inserted at any
+  index changes no verdict; this is what licenses registration over a private
+  input loop), `first_match_inv` (**proven** — a claim implies every earlier
+  rung declined), `resolve_hatch` (**spec**, by construction — it says the model
+  is consistent, not that the Rust refines it), and `describe_agrees`
+  (**spec**, `rfl`). Theorems that constrained nothing were deleted, not kept
+  for the count.
+- **`spec/vectors/newt_ladder.toml`** — the demo table, now the single source
+  for the truth-table test and the generator both.
+- **`just gen-vectors`** (`examples/gen_vectors.rs`) — walks the whole input
+  space of two grids through the real `Ladder::resolve` and emits
+  `spec/vectors/ladder.json` (data, for C3's Python consumer) and
+  `formal/Precedence/Vectors.lean` (a `decide` block, because a Mathlib-free
+  Lean has no JSON reader). **704 verdicts**, re-derived by the kernel.
+  The vector set's identity is a `ContentId` minted by `content-addressable`.
+- **Two grids, not one.** The `demo` grid (192 cases) plus a **`rogue`** grid
+  (512) whose top rung claims the reserved trigger. Against the demo table
+  alone, demoting the hatch branch below the rung scan changed *no* verdict, so
+  the vectors could not witness the one property they exist for.
+- **`scripts/check-vectors.sh`** (`just vectors`, CI job `vectors`, pre-push) —
+  regenerates and fails on a diff. This is the only thing tying the Lean proofs
+  to the shipped Rust; nothing in Lean reads `src/lib.rs`. Deliberately
+  unfiltered in CI, so a change to `src/` reaches it.
+- **`scripts/check-lean-proofs.sh`** (`just no-sorry`, CI, pre-push) — the
+  `sorry` gate. `lake build` exits **0** on a `sorry`, verified by seeding one,
+  so without this "sorry-free" is a human assertion CI never checks. Compiled
+  evaluation as a proof tactic is refused on the same grounds. Carries a
+  positive read assertion, because an absence check fails open.
+- **`.github/workflows/formal.yml`** — `lake build` plus the `sorry` grep, with
+  a **partial** hook-parity block: the grep is mirrored in `.githooks/pre-push`
+  (it is a grep), `lake build` is a documented CI-only exception (it needs a
+  Lean toolchain). `ci.yml` and the hook name each other in both directions.
+- `formal/README.md` records the six mutations these gates were checked against
+  and what each one did.
+
+### Not in C2
+
+The PyO3/PyPI face, the release workflow, and the `0.1.0` publish (C3); the
+wasm/npm package (C4).

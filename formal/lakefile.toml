@@ -1,0 +1,17 @@
+name = "precedence"
+defaultTargets = ["Precedence"]
+
+# Machine-checked model of `src/lib.rs::Ladder::resolve`. Self-contained: no
+# Mathlib, so it builds from a bare Lean toolchain (pinned in `lean-toolchain`).
+# `lake build` checks every theorem; exit 0 iff all proofs go through.
+#
+# `defaultTargets` is LOAD-BEARING, not decoration. A `[[lean_lib]]` that is not
+# named there is not built by a bare `lake build`, so its theorems are never
+# checked and CI goes green having compiled nothing. If you add a library here,
+# add it to line 2 as well.
+#
+# What is checked, and what each theorem does NOT establish, is stated per
+# theorem in README.md — read that before citing one of these as evidence.
+
+[[lean_lib]]
+name = "Precedence"

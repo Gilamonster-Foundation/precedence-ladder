@@ -73,8 +73,21 @@ toml = { version = "0.9", default-features = false, features = [
 # Identity comes from the crate, never from a hand-rolled digest.
 content-addressable = { version = "0.1.2", optional = true }
 
-# NO dev-dependencies, on purpose. The truth table is pure Rust and the
-# dependency guard shells out to `cargo tree` rather than parsing `cargo
-# metadata` JSON, so the test tier needs nothing the crate does not already
-# have. Adding one is fine — it ships to nobody — but it is worth noticing that
-# none was needed.
+# Dev-dependencies ship to NOBODY: they are absent from the resolved closure of
+# every consumer, and `tests/guard.rs` walks that closure with `--edges
+# normal,build` precisely so this table cannot weaken the empty-closure claim.
+#
+# There is exactly one, and only the golden-vector generator uses it. Emitting
+# JSON by hand would mean hand-rolling string escaping in the one artifact three
+# languages have to agree on byte-for-byte — the opposite of the trade this
+# crate makes everywhere else.
+[dev-dependencies]
+serde_json = "1"
+
+# The golden-vector generator (`just gen-vectors`). `required-features` keeps it
+# out of `cargo build --all-targets` at the default and `--no-default-features`
+# settings, so the bare-predicate configuration never compiles serde, toml or
+# content-addressable on its account.
+[[example]]
+name = "gen_vectors"
+required-features = ["cid", "table"]

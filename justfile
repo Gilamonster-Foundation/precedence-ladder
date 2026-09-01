@@ -1,12 +1,18 @@
 # justfile for precedence-ladder.
 #
-# `just check` runs the full local gate (fmt + clippy + test + doc + leaf), the
-# same steps enforced by .githooks/pre-push and .github/workflows/ci.yml. The
-# CI-only `msrv` (1.88) job is intentionally not in `check` — see the pre-push
-# hook header for the rationale. Run it with `just msrv`.
+# `just check` runs the full local gate (fmt + clippy + test + doc + leaf +
+# vectors + no-sorry), the same steps enforced by .githooks/pre-push and
+# .github/workflows/{ci,formal}.yml. Two CI jobs are intentionally not in
+# `check`, both documented in the pre-push hook header: `msrv` (1.88, a second
+# toolchain) and `formal`'s `lake build` (a Lean toolchain). Run them with
+# `just msrv` and `just lean`.
 
-# Run the full local check suite: format, lint, test, doc, leaf guard.
-check: fmt clippy test doc leaf
+# Run the full local check suite: format, lint, test, doc, leaf guard, vectors.
+#
+# `lean` is deliberately NOT here — see the `lean` recipe's comment and the
+# pre-push hook header. `vectors` and `no-sorry` are, because both are cheap and
+# both gate real drift.
+check: fmt clippy test doc leaf vectors no-sorry
 
 # Verify formatting (does not modify files).
 fmt:
@@ -43,6 +49,42 @@ doc:
 # pre-push hook; reads only `cargo metadata`, so it is fast.
 leaf:
     ./scripts/check-leaf-deps.sh
+
+# Regenerate the golden vectors from the Rust truth table.
+#
+# Writes `spec/vectors/ladder.json` (data, for the C3 Python consumer) and
+# `formal/Precedence/Vectors.lean` (a `decide` block, because a Mathlib-free
+# Lean has no JSON reader). Both are GENERATED — never hand-edit them; run this
+# and commit the result.
+gen-vectors:
+    cargo run --quiet --example gen_vectors --features cid,table -- .
+
+# Assert the checked-in vectors match a fresh run. Mirrors the CI `vectors` job.
+#
+# This is the ONLY thing tying the Lean proofs to the shipped Rust: the theorems
+# in `formal/Precedence/Basic.lean` are about the Lean model, and nothing in
+# Lean reads `src/lib.rs`.
+vectors:
+    ./scripts/check-vectors.sh
+
+# The `sorry` gate. Mirrors half of the CI `formal` job.
+#
+# `lake build` exits 0 on a `sorry`, so without this "sorry-free" would be a
+# human assertion CI never checks. Pure grep — no Lean toolchain needed, which
+# is why this half of `formal.yml` IS mirrored in the push hook and `lake build`
+# is not.
+no-sorry:
+    ./scripts/check-lean-proofs.sh
+
+# Check every Lean theorem. Mirrors the CI `formal` job's `lake build` step.
+#
+# NOT in `just check` and NOT in the push hook: it needs a Lean toolchain (via
+# elan, version pinned in `formal/lean-toolchain`), and requiring a full Lean
+# install of everyone who pushes would be disproportionate for a Rust crate.
+# CI-only by design — the documented exception, recorded in both the workflow
+# and the hook header.
+lean:
+    cd formal && lake build
 
 # Verify the package version declarations agree via the canonical tool, and
 # self-test the SemVer<->PEP 440 mapping. This is the SINGLE source of that

@@ -6,6 +6,11 @@
 # `check`, both documented in the pre-push hook header: `msrv` (1.88, a second
 # toolchain) and `formal`'s `lake build` (a Lean toolchain). Run them with
 # `just msrv` and `just lean`.
+#
+# The RELEASE gate (.github/workflows/release.yml) is a superset: its
+# `rust-gate` job runs `just check` verbatim and adds `--locked`, the publish
+# dry run and a packaged-tarball check. Rehearse all of that locally with
+# `just release-dryrun` before asking for a signed tag — it publishes nothing.
 
 # Run the full local check suite: format, lint, test, doc, leaf guard, vectors.
 #
@@ -101,6 +106,46 @@ verify-release tag="":
     else
       python3 scripts/verify_release.py
     fi
+
+# Print a version's release notes: its CHANGELOG section VERBATIM plus the
+# reference-link definitions from the foot of the file. This is exactly what
+# `.github/workflows/release.yml` feeds to `gh release create --notes-file`, so
+# running it is how you read the release body before the tag exists.
+#   just release-notes             # the version declared in Cargo.toml
+#   just release-notes v0.1.0-rc.1 # a specific one (leading `v` optional)
+release-notes version="":
+    ./scripts/release-notes.sh {{ version }}
+
+# The local release rehearsal. Everything the release gate does that does NOT
+# need a tag, a second toolchain, or the network to accept anything — run it
+# before asking the operator for a signed tag.
+#
+# It publishes NOTHING. `cargo publish --dry-run` packs the crate and builds it
+# from the packed tarball, which is the step that catches missing metadata and
+# files that only exist in the working tree.
+#
+#   just release-dryrun                # rehearse against Cargo.toml's version
+#   just release-dryrun v0.1.0-rc.1    # also assert the intended tag matches
+#
+# NOT in `just check` and NOT in the push hook: it needs Python and it rebuilds
+# the crate from a fresh tarball. The push hook mirrors the one piece of this
+# that is pure text — that the declared version has a CHANGELOG section.
+release-dryrun tag="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just verify-release "{{ tag }}"
+    echo
+    echo "==> ./scripts/release-notes.sh (the release body)"
+    ./scripts/release-notes.sh "{{ tag }}" | head -3
+    echo "    ... $(./scripts/release-notes.sh "{{ tag }}" | wc -l) lines total"
+    echo
+    echo "==> cargo package --list --locked"
+    cargo package --list --locked
+    echo
+    echo "==> cargo publish --locked --dry-run"
+    cargo publish --locked --dry-run
+    echo
+    echo "release-dryrun OK — nothing was published."
 
 # Build + test on the pinned MSRV (1.88). Mirrors the CI-only `msrv` job; run
 # it manually, since installing a second toolchain is too heavy for a push hook.

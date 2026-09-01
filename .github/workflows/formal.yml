@@ -27,6 +27,15 @@
 # which this workflow's paths filter would not see. It lives in the unfiltered
 # `vectors` job of ci.yml.
 #
+# DUPLICATED IN release.yml, ON PURPOSE. The paths filter below — and the fact
+# that this workflow triggers on branch pushes, not tags — means a `v*` tag
+# never runs this job. A release would otherwise inherit a green that was never
+# computed for the commit being released, which is exactly the vacuous green
+# this file's `sorry` gate exists to prevent. So `.github/workflows/release.yml`
+# has its own `formal` job with the same two steps. **When you edit the steps
+# here, edit that job too** — the two are a mirrored pair, like this file and
+# the push hook.
+#
 # ACTION PINNING: third-party actions are pinned to a full commit SHA with a
 # human-readable version tag in a trailing comment.
 #

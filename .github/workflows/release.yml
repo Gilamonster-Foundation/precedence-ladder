@@ -6,8 +6,8 @@
 # condition:
 #
 #   provenance ─┐
-#   rust-gate ──┼─► release-gate ─┬─► publish-crate   (crates.io)
-#   msrv ───────┤                 └─► github-release  (the published Release)
+#   rust-gate ──┼─► release-gate ─► publish-crate ─► github-release
+#   msrv ───────┤                   (crates.io)     (the published Release)
 #   formal ─────┘
 #
 #   provenance   the version declarations agree (Cargo.toml AND Cargo.lock, via
@@ -194,6 +194,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A here-string, not `printf | grep -q`. `grep -q` exits on its first
+          # match, which SIGPIPEs the writer; under `set -o pipefail` that 141
+          # becomes the pipeline status and `!` inverts it into a FALSE "missing
+          # file" error. Harmless while the listing fits the pipe buffer, wrong
+          # the first time it does not — the same bug already fixed once in
+          # scripts/release-notes.sh.
           listing="$(cargo package --list --locked)"
           for required in \
             formal/Precedence/Basic.lean \
@@ -206,7 +212,7 @@ jobs:
             scripts/check-vectors.sh \
             scripts/check-lean-proofs.sh
           do
-            if ! printf '%s\n' "${listing}" | grep -qxF "${required}"; then
+            if ! grep -qxF "${required}" <<<"${listing}"; then
               echo "::error::${required} is missing from the packaged crate."
               echo "A consumer must be able to re-check the proofs and regenerate"
               echo "the vectors from the published tarball. If dropping it is"
@@ -317,11 +323,26 @@ jobs:
   # the tag is the GPG-signed, provenance-bearing object made by the operator,
   # and a release that conjures one produces an unsigned tag on whatever commit
   # the release happened to name.
+  #
+  # NEEDS `publish-crate`, NOT JUST THE GATE — the ordering is deliberate. The
+  # crates.io publish sits behind a protected environment, i.e. behind a HUMAN
+  # approval that can be rejected or time out. Run this in parallel with that
+  # approval and the two failure modes are not symmetric:
+  #   - Release first, then the publish is rejected or fails => a published
+  #     Release announcing a version nobody can `cargo add`. Not recoverable by
+  #     re-running anything; the announcement is already out.
+  #   - Publish first, then this fails => a tag and a crate with no Release
+  #     yet. An unfinished release, but the recoverable kind: fix and re-run
+  #     this one idempotent job.
+  # Serializing behind the publish makes the human gate govern both halves and
+  # forces the second, recoverable failure. The cost is that the Release lands a
+  # minute later; the benefit is that it never describes a crate that is not
+  # there.
   # --------------------------------------------------------------------------
   github-release:
     name: publish the GitHub Release (notes = CHANGELOG verbatim)
     if: github.event_name == 'push'
-    needs: [release-gate]
+    needs: [release-gate, publish-crate]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the Release object; nothing else
@@ -348,8 +369,22 @@ jobs:
           # a re-tag. `create` refuses an existing release; `edit` updates it.
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "release ${TAG} exists — updating its notes"
-            gh release edit "${TAG}" "${flags[@]:1}"
+            # `--draft=false` is not redundant. `gh release edit` leaves
+            # `isDraft` alone unless told otherwise, so a Release drafted by any
+            # other route would get fresh notes and stay invisible to everyone
+            # without write access — while this job reported success. Publishing
+            # is the invariant; assert it on the update path too.
+            gh release edit "${TAG}" --draft=false "${flags[@]:1}"
           else
             gh release create "${TAG}" --title "${TAG}" "${flags[@]}"
           fi
-          gh release view "${TAG}" --json name,isDraft,isPrerelease,url
+          # POSITIVE READ ASSERTION. "The GitHub Release is PUBLISHED, never
+          # drafted" is the whole point of this job, and neither `create` nor
+          # `edit` fails if it ends up otherwise. Printing the state is not
+          # checking it, so check it.
+          state="$(gh release view "${TAG}" --json name,isDraft,isPrerelease,url)"
+          echo "${state}"
+          if [ "$(jq -r .isDraft <<<"${state}")" != "false" ]; then
+            echo "::error::release ${TAG} is a DRAFT. A draft is visible only to people with write access, so a pushed tag with a drafted Release is an unfinished release."
+            exit 1
+          fi

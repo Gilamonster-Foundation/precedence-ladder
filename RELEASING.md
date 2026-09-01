@@ -13,15 +13,25 @@ the **published** GitHub Release whose body is this file's sibling
 
 ## The gate (what must be green before anything publishes)
 
-Both publish paths `needs: [release-gate]`, and `release-gate` needs the whole
-DAG — so a route to publishing past a red check does not exist:
+Nothing publishes until `release-gate`, and `release-gate` needs the whole DAG —
+so a route to publishing past a red check does not exist:
 
 ```
 provenance ─┐
-rust-gate ──┼─► release-gate ─┬─► publish-crate   (crates.io)
-msrv ───────┤                 └─► github-release  (the published Release)
+rust-gate ──┼─► release-gate ─► publish-crate ─► github-release
+msrv ───────┤                   (crates.io)     (the published Release)
 formal ─────┘
 ```
+
+**The Release comes after the crate, not beside it.** `publish-crate` sits
+behind the protected `crates-io` environment — behind a human approval that can
+be rejected or time out. Running the Release in parallel with that approval
+makes the two failure modes asymmetric: a Release published before a rejected
+publish announces a version nobody can `cargo add`, and no re-run takes that
+back. Serialized, the worst case is a tag and a crate with the Release still to
+come — an unfinished release, but the recoverable kind: re-run one idempotent
+job. The Release lands a minute later and never describes a crate that is not
+there.
 
 | Job | What it proves |
 |---|---|
@@ -182,12 +192,16 @@ Prereleases never take *Latest*, so an rc is safe in that second respect.
 
 ### If a publish partially fails
 
-`publish-crate` and `github-release` are independent jobs that both gate on
-`release-gate`. If one succeeds and the other fails, **re-run only the failed
-job** from the Actions tab. `github-release` is idempotent — it edits an
-existing Release rather than failing on it — and `cargo publish --locked`
-resolves the same lockfile the gate already validated. A partial failure is a
-one-job re-run, **never** a re-tag.
+**Re-run only the failed job** from the Actions tab. `github-release` is
+idempotent — it edits an existing Release rather than failing on it, and forces
+`--draft=false` on that path — and `cargo publish --locked` resolves the same
+lockfile the gate already validated. A partial failure is a one-job re-run,
+**never** a re-tag.
+
+Because the Release is serialized behind the crate, the only partial state
+reachable is *crate published, Release missing*, which is exactly the one a
+re-run fixes. Do not "re-run all jobs" to get there: `publish-crate` will go red
+on the already-published version. Re-run `github-release` alone.
 
 ## crates.io authentication: token now, OIDC later
 

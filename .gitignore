@@ -1,0 +1,26 @@
+# --- Rust ---
+# Build artifacts (cargo default output dir).
+/target
+
+# Cargo.lock IS committed. The usual "libraries don't commit lockfiles"
+# convention optimizes for downstream resolution flexibility — which is
+# preserved, because consumers ignore a dependency's committed lock. What we
+# gain is REPRODUCIBLE CI: the MSRV job resolves the SAME dependency graph on
+# every run, so a transitive update can't silently move the real MSRV floor,
+# and the `tests/guard.rs` closure assertions can't go red for a reason that
+# has nothing to do with this crate. (So: NO `Cargo.lock` entry here.)
+
+# --- Lean (formal/, lands in C2) ---
+.lake/
+formal/.lake/
+
+# --- Python (packaging lands in C3) ---
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
+
+# --- editors / OS ---
+*.swp
+.DS_Store

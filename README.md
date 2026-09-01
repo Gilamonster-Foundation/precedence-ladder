@@ -139,10 +139,17 @@ fails on a diff, in CI and in the push hook.
 
 ## Status
 
-**Unreleased, `0.1.0` in progress.** Slices C1 (the crate and `resolve`) and C2
-(the Lean layer and golden vectors) have landed. The PyO3/PyPI face and the
-release workflow (C3), and the wasm/npm package (C4), land in later slices.
-Nothing is published to crates.io or PyPI yet.
+**`0.1.0-rc.1` — the first release candidate.** Slices C1 (the crate and
+`resolve`) and C2 (the Lean layer and golden vectors) have landed, and the
+release path ships them to crates.io as a **prerelease**. The API and the `cid`
+bytes freeze at `0.1.0`, not here: an rc exists so the packaging, the MSRV floor
+and the byte encoding get exercised against a real registry first. The PyO3/PyPI
+face (C3) and the wasm/npm package (C4) land in later slices; nothing is
+published to PyPI yet.
+
+The published tarball carries `formal/`, `spec/vectors/` and the generator, so
+the proofs and the 704 golden verdicts are checkable from the artifact you
+download — not only from this repo. See [`RELEASING.md`](RELEASING.md).
 
 ## Build
 

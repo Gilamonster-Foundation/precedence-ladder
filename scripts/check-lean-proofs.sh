@@ -21,12 +21,17 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 formal="$root/formal"
 
+# The floor is the HAND-WRITTEN tree — the root module and the model — not the
+# current file count. A generated module going missing is caught by `lake build`
+# (the import fails) and by `scripts/check-vectors.sh` (the diff), so pinning
+# this to today's total would only make the gate brittle without making it
+# stricter.
 mapfile -t files < <(find "$formal" -name '*.lean' -not -path '*/.lake/*' | sort)
-if [ "${#files[@]}" -lt 3 ]; then
+if [ "${#files[@]}" -lt 2 ]; then
   echo "check-lean-proofs: found only ${#files[@]} .lean files under $formal." >&2
   echo "The scan is not reading the formal tree, so the absence it reports" >&2
-  echo "means nothing. Expected at least Precedence.lean, Precedence/Basic.lean" >&2
-  echo "and the generated Precedence/Vectors.lean." >&2
+  echo "means nothing. Expected at least Precedence.lean and" >&2
+  echo "Precedence/Basic.lean." >&2
   exit 1
 fi
 

@@ -2,9 +2,10 @@
 #
 # `just check` runs the full local gate (fmt + clippy + test + doc + leaf +
 # vectors + no-sorry), the same steps enforced by .githooks/pre-push and
-# .github/workflows/ci.yml. Two checks are intentionally not in `check`, both
-# needing an extra toolchain: `msrv` (1.88) and `lean` (`lake build`). Run them
-# with `just msrv` and `just lean`.
+# .github/workflows/{ci,formal}.yml. Two CI jobs are intentionally not in
+# `check`, both documented in the pre-push hook header: `msrv` (1.88, a second
+# toolchain) and `formal`'s `lake build` (a Lean toolchain). Run them with
+# `just msrv` and `just lean`.
 
 # Run the full local check suite: format, lint, test, doc, leaf guard, vectors.
 #
@@ -58,7 +59,7 @@ leaf:
 gen-vectors:
     cargo run --quiet --example gen_vectors --features cid,table -- .
 
-# Assert the checked-in vectors match a fresh run.
+# Assert the checked-in vectors match a fresh run. Mirrors the CI `vectors` job.
 #
 # This is the ONLY thing tying the Lean proofs to the shipped Rust: the theorems
 # in `formal/Precedence/Basic.lean` are about the Lean model, and nothing in
@@ -66,18 +67,22 @@ gen-vectors:
 vectors:
     ./scripts/check-vectors.sh
 
-# The `sorry` gate.
+# The `sorry` gate. Mirrors half of the CI `formal` job.
 #
 # `lake build` exits 0 on a `sorry`, so without this "sorry-free" would be a
-# human assertion nothing checks. Pure grep — no Lean toolchain needed.
+# human assertion CI never checks. Pure grep — no Lean toolchain needed, which
+# is why this half of `formal.yml` IS mirrored in the push hook and `lake build`
+# is not.
 no-sorry:
     ./scripts/check-lean-proofs.sh
 
-# Check every Lean theorem.
+# Check every Lean theorem. Mirrors the CI `formal` job's `lake build` step.
 #
-# NOT in `just check`: it needs a Lean toolchain (via elan, version pinned in
-# `formal/lean-toolchain`), and requiring a full Lean install of everyone who
-# works on a Rust crate would be disproportionate.
+# NOT in `just check` and NOT in the push hook: it needs a Lean toolchain (via
+# elan, version pinned in `formal/lean-toolchain`), and requiring a full Lean
+# install of everyone who pushes would be disproportionate for a Rust crate.
+# CI-only by design — the documented exception, recorded in both the workflow
+# and the hook header.
 lean:
     cd formal && lake build
 

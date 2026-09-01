@@ -119,18 +119,38 @@ resolved dependency closure of this crate is *empty*, and
 multiformats stack, which would make a wasm artifact an order of magnitude
 larger than a pure predicate has any business being.
 
+## The formal layer
+
+`formal/` holds a Mathlib-free Lean 4 model of `resolve`. The theorem worth
+naming is **`declining_rung_is_transparent`**: a rung that does not own the
+trigger, or whose claimant is not live, can be inserted at *any* index without
+changing any verdict — over hostile tables, with no well-formedness hypothesis.
+That is what licenses a new claimant registering a rung instead of standing up
+its own input loop.
+
+**Read `formal/README.md` before citing any of it.** Nothing in Lean reads
+`src/lib.rs`, so two of the four hand-written theorems are true by construction
+of the model and are labelled `spec`, not `proven`, with a line on what they do
+not establish. What actually ties the two languages together is the golden
+vectors: `just gen-vectors` walks the whole input space of two ladders through
+the real `Ladder::resolve` and emits both `spec/vectors/ladder.json` and a Lean
+`decide` block re-deriving all 704 verdicts. `just vectors` regenerates and
+fails on a diff, in CI and in the push hook.
+
 ## Status
 
-**Unreleased, `0.1.0` in progress.** This is slice C1 — the crate skeleton and
-`resolve`. The Lean layer (C2), the PyO3/PyPI face and the release workflow
-(C3), and the wasm/npm package (C4) land in later slices. Nothing is published
-to crates.io or PyPI yet.
+**Unreleased, `0.1.0` in progress.** Slices C1 (the crate and `resolve`) and C2
+(the Lean layer and golden vectors) have landed. The PyO3/PyPI face and the
+release workflow (C3), and the wasm/npm package (C4), land in later slices.
+Nothing is published to crates.io or PyPI yet.
 
 ## Build
 
 ```bash
-just check          # fmt + clippy + test + doc + leaf  (the local gate)
+just check          # fmt + clippy + test + doc + leaf + vectors + no-sorry
 just install-hooks  # wire .githooks/ as core.hooksPath
+just gen-vectors    # regenerate the golden vectors after changing `resolve`
+just lean           # check every Lean theorem (needs a Lean toolchain via elan)
 just msrv           # build + test on the pinned MSRV
 ```
 

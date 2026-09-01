@@ -83,9 +83,13 @@ here is a kernel reduction — `#print axioms` on the generated theorems shows
 none at all. (`set_option maxRecDepth` in the generated file raises an
 elaborator budget, not a trust boundary.)
 
-The scan carries a positive read assertion: it fails if it finds fewer than
-three `.lean` files, because an absence check fails *open* — anything that
-shrinks the scanned text makes it more likely to pass.
+The scan carries a positive read assertion: it fails if it finds fewer than two
+`.lean` files — the hand-written root module and the model — because an absence
+check fails *open*, and anything that shrinks the scanned text makes it more
+likely to pass. The floor is the hand-written tree, not today's file count: a
+*generated* module going missing is `lake build`'s job (the import fails) and
+`check-vectors.sh`'s (the diff), so pinning it higher would make the gate
+brittle without making it stricter.
 
 ## Mutations these gates were checked on
 

@@ -1,0 +1,72 @@
+# Machine-checked Lean model of `src/lib.rs::Ladder::resolve` (`formal/`).
+#
+# Two steps, and they are gates of different kinds:
+#   - `lake build` checks every theorem, INCLUDING the generated `decide` block
+#     that re-derives all 704 golden verdicts. A change to `resolve` that is not
+#     reflected in the model turns this red.
+#   - the `sorry` grep is the gate that makes "sorry-free" mean anything.
+#     Verified by seeding one: `lake build` exits **0** on a `sorry` — an
+#     unproven theorem is a warning, not an error — so without this step a stub
+#     ships with a green badge. `native_decide` is refused on the same grounds
+#     (it adds `Lean.ofReduceBool` to the trusted base).
+#
+# HOOK PARITY: PARTIAL, and the split is deliberate.
+#   - MIRRORED in .githooks/pre-push: the `sorry` grep, as
+#     `scripts/check-lean-proofs.sh` (`just no-sorry`). It is a grep — no
+#     toolchain, milliseconds — so there is no excuse for it to be CI-only.
+#   - DOCUMENTED EXCEPTION, CI-only: `lake build`. It needs a full Lean
+#     toolchain via elan, and requiring that of everyone who pushes to a Rust
+#     crate is disproportionate. `just lean` runs it locally; `formal/README.md`
+#     documents it. This mirrors newt-agent's `formal.yml`, which records the
+#     same decision.
+# When editing this file, update .githooks/pre-push to match — blocking
+# requirement, not a nicety.
+#
+# The golden-vector DRIFT check (`scripts/check-vectors.sh`) is deliberately NOT
+# here: it needs cargo, not Lean, and it must run on every change to `src/`,
+# which this workflow's paths filter would not see. It lives in the unfiltered
+# `vectors` job of ci.yml.
+#
+# ACTION PINNING: third-party actions are pinned to a full commit SHA with a
+# human-readable version tag in a trailing comment.
+#
+# LEAST PRIVILEGE: `permissions: {}` at the workflow level; the job re-grants
+# only `contents: read`.
+
+name: formal (Lean proofs)
+
+on:
+  push:
+    paths: ['formal/**', 'scripts/check-lean-proofs.sh', '.github/workflows/formal.yml']
+  pull_request:
+    paths: ['formal/**', 'scripts/check-lean-proofs.sh', '.github/workflows/formal.yml']
+
+permissions: {}
+
+jobs:
+  lean:
+    name: lean (every theorem, and no sorry)
+    runs-on: ${{ vars.GMF_LINUX_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The `sorry` gate runs FIRST, and needs no toolchain. A tree full of
+      # stubs should go red in seconds, not after a Lean install.
+      - name: no sorry, no native_decide
+        run: ./scripts/check-lean-proofs.sh
+
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          set -euo pipefail
+          curl -sSfL https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
+          sh elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # `defaultTargets` in formal/lakefile.toml is what makes this build the
+      # library rather than nothing at all. A `[[lean_lib]]` missing from it is
+      # a green badge over an unchecked tree.
+      - name: lake build (checks every theorem; toolchain pinned in lean-toolchain)
+        working-directory: formal
+        run: lake build

@@ -207,6 +207,17 @@ CI cannot see or assert any of these. Confirm before the first `v*` tag:
 - [ ] **Create the `crates-io` deployment environment** (Settings →
       Environments) with a required reviewer, so a human gate sits in front of
       the irreversible publish.
+- [ ] **Confirm Actions can write the Release object.** Settings → Actions →
+      General → *Workflow permissions* currently reads **"Read repository
+      contents and packages permissions"** on this repo. `github-release` asks
+      for `contents: write` explicitly, which normally overrides that default —
+      but this is the one prerequisite whose failure lands *after* the crate is
+      already public, because `publish-crate` and `github-release` run in
+      parallel off the same gate. Verify it (or flip the setting to *Read and
+      write*) before the first tag rather than discovering it from a tag with no
+      Release. If it does bite: fix the setting and re-run the single
+      `github-release` job — it is idempotent, and `--verify-tag` means it can
+      never mint a tag. **Never re-tag.**
 - [ ] **Protect `main`** (require the PR + CI checks; no direct pushes) and
       **protect the `v*` tags** so only maintainers can create release tags.
       The `provenance` job asserts the released commit is contained in `main`,

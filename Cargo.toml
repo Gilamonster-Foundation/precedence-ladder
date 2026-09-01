@@ -11,7 +11,7 @@ default-members = ["."]
 
 [package]
 name = "precedence-ladder"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 # FROZEN policy: the edition stays at 2021 and the MSRV floor is 1.88 for the
 # 0.1.x line.
 #

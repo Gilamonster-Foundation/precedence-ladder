@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # PIPELINE PARITY: mirrors the `fmt`, `clippy`, `test`, `doc`, `leaf-deps` and
-# `vectors` jobs in .github/workflows/ci.yml, plus the `sorry`-grep half of
-# .github/workflows/formal.yml. When editing this file, verify it still matches
-# both pipelines; do not bypass it with --no-verify.
+# `vectors` jobs in .github/workflows/ci.yml, the `sorry`-grep half of
+# .github/workflows/formal.yml, and the release-notes half of
+# .github/workflows/release.yml's `provenance` job. When editing this file,
+# verify it still matches all three pipelines; do not bypass it with
+# --no-verify.
 #
 # This repo is small enough to mirror its pipeline HONESTLY — the whole gate is
 # seconds, not the ~50-minute whole-workspace hook that made `--no-verify` a
@@ -21,6 +23,17 @@
 #     elan. Requiring a Lean install of everyone who pushes to a Rust crate is
 #     disproportionate; newt-agent's `formal.yml` records the same decision.
 #     Run it with `just lean`.
+#
+# release.yml adds four more exceptions, each for the same class of reason —
+# it is TAG-triggered, so most of it has nothing to mirror at push time:
+#   - `provenance`'s tag checks need a tag, which does not exist on a push.
+#   - `cargo publish --dry-run` packs the crate and rebuilds it from the
+#     tarball; `--locked` supersets and `msrv` need a second toolchain.
+#     Run all of it with `just release-dryrun`.
+#   - `scripts/verify_release.py` needs a Python interpreter — the same
+#     exception ci.yml's `version-drift` job already records.
+# What IS mirrorable from release.yml is mirrored, at the bottom of this file:
+# the release-notes check, which is pure text.
 #
 # The `doc`, `leaf-deps` and `vectors` jobs ARE mirrored below (rustdoc is
 # cheap, the leaf guard only reads `cargo metadata`, and the vector check is one
@@ -75,5 +88,13 @@ echo "==> ./scripts/check-vectors.sh (the golden vectors are not stale)"
 # Lean toolchain — `lake build` is the documented exception above.
 echo "==> ./scripts/check-lean-proofs.sh (no sorry, no native_decide)"
 "$root/scripts/check-lean-proofs.sh"
+
+# Mirrors the release-notes half of .github/workflows/release.yml's `provenance`
+# job. The release body IS the CHANGELOG section verbatim, so a version bump
+# that forgets the entry publishes an empty release — after the tag is already
+# pushed and crates.io has already accepted the crate. Pure text, no toolchain,
+# milliseconds, so there is no excuse for it to be release-only.
+echo "==> ./scripts/release-notes.sh (the declared version has a CHANGELOG section)"
+"$root/scripts/release-notes.sh" >/dev/null
 
 echo "pre-push checks passed."

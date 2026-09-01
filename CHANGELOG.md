@@ -10,13 +10,24 @@ equivalent PEP 440 spelling on PyPI once the Python face lands).
 | Rust core | crates.io | `precedence-ladder` | `precedence_ladder` (crate) |
 | Python (slice C3) | PyPI | `precedence-ladder` | `import precedence_ladder` |
 
-## [Unreleased] — `0.1.0`
+## [Unreleased]
 
-**Nothing is published yet.** `0.1.0` is assembled across slices C1–C3; the
-crates.io and PyPI publishes are gated on a later slice and an operator
-decision.
+Nothing yet.
 
-### Added — slice C1: the crate and `resolve`
+## [0.1.0-rc.1] — 2026-09-01
+
+**The first release candidate**, and the first thing this project publishes
+anywhere. It is the Rust core only: the predicate, the guards, the Lean layer,
+the golden vectors, and the release path that ships them. It goes to crates.io
+as a **prerelease**, so the packaging, the MSRV floor and the `cid` byte
+encoding get exercised against a real registry before `0.1.0` freezes them.
+
+**What an rc means here.** The API and the `cid` bytes are not yet a contract —
+`0.1.0` is where they freeze. The one thing that is already unrepresentable
+rather than provisional is the escape-hatch invariant, and no version bump can
+weaken it.
+
+### Added — slice C1: the crate and `resolve` ([#1])
 
 - **`Hatch`** — the operator's escape hatch: a reserved trigger set and an
   action label. **Non-empty by construction**: `Hatch::new(action, first, rest)`
@@ -84,7 +95,7 @@ decision.
   hook mirrors the pipeline and each names the other in a parity comment. The
   whole gate is seconds; do not let it grow into a hook people route around.
 
-### Added — slice C2: the Lean layer and the golden vectors
+### Added — slice C2: the Lean layer and the golden vectors ([#2])
 
 - **`formal/`** — a Mathlib-free Lean 4 model of `resolve`
   (`leanprover/lean4:v4.31.0`), with `[[lean_lib]] Precedence` **and**
@@ -128,7 +139,50 @@ decision.
 - `formal/README.md` records the six mutations these gates were checked against
   and what each one did.
 
-### Not in C2
+### Added — the release path ([#3])
 
-The PyO3/PyPI face, the release workflow, and the `0.1.0` publish (C3); the
-wasm/npm package (C4).
+- **`.github/workflows/release.yml`** — tag-driven. `provenance` (the version
+  declarations agree, the tag is `v<version>`, the tag *is* `HEAD`, and `HEAD`
+  is contained in `main`) plus the whole per-push gate re-run `--locked`, plus
+  the MSRV job, plus **`lake build` and the `sorry` gate**, all feeding a single
+  `release-gate` aggregator that both publishes hang off. A release that skips
+  the proofs is not this line's release: `formal.yml` is paths-filtered and does
+  not fire on a tag, so the release workflow runs the Lean layer itself rather
+  than inheriting a green that was never computed.
+- **The GitHub Release is created by the workflow**, `--verify-tag` (so a
+  release can never mint a tag) with the CHANGELOG section verbatim as the
+  notes. `--prerelease` is derived from the tag containing a SemVer prerelease
+  hyphen, not hand-set, so `0.1.0` does not need a workflow edit to stop being
+  a prerelease.
+- **`scripts/release-notes.sh`** (`just release-notes`) — extracts a version's
+  CHANGELOG section plus the reference-link definitions at the foot of the file,
+  which is what keeps `[#3]`-style references from rendering as literal text on
+  the Release page. Mirrored in `.githooks/pre-push` as a drift check: the
+  declared version must have a CHANGELOG section, caught on the bump rather
+  than at the tag.
+- **`just release-dryrun`** — `cargo publish --dry-run --locked`, the version
+  checks, and the notes extraction, locally, publishing nothing.
+- **`scripts/verify_release.py` now checks `Cargo.lock`.** This repo commits its
+  lockfile and publishes `--locked`, so a bump that edits `Cargo.toml` without
+  refreshing the lock used to fail at the last irreversible step of a release
+  instead of the first. The self-test grew an anti-vacuous twin for it, on a
+  synthetic repo, so the guard cannot pass by the real tree merely happening to
+  agree.
+
+### Not in this candidate
+
+The PyO3/PyPI face and the PyPI publish (C3); the wasm/npm package (C4). The
+`pyproject.toml` and `precedence-ladder-py/Cargo.toml` declarations that
+`verify_release.py` already knows how to check do not exist yet, so it checks
+the two that do and says so.
+
+<!-- REFERENCE-LINK DEFINITIONS. `scripts/release-notes.sh` appends every line
+     matching `^[ref]: http` to the extracted section, because a release body
+     full of `[#3]` renders as literal text without them. Keep them here, at the
+     foot, in one block. -->
+
+[Unreleased]: https://github.com/Gilamonster-Foundation/precedence-ladder/compare/v0.1.0-rc.1...HEAD
+[0.1.0-rc.1]: https://github.com/Gilamonster-Foundation/precedence-ladder/releases/tag/v0.1.0-rc.1
+[#1]: https://github.com/Gilamonster-Foundation/precedence-ladder/pull/1
+[#2]: https://github.com/Gilamonster-Foundation/precedence-ladder/pull/2
+[#3]: https://github.com/Gilamonster-Foundation/precedence-ladder/pull/3

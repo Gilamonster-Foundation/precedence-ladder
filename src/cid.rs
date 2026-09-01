@@ -17,8 +17,12 @@
 //! part of the identity**, because it is part of the meaning — a ladder is not
 //! a set, and two tables that differ only in row order resolve differently.
 //!
-//! These bytes are NOT frozen: `0.1.0` is unpublished, and the golden vectors
-//! that pin them land in slice C2.
+//! These bytes are pinned by the golden vectors (`spec/vectors/ladder.json`,
+//! slice C2) but are NOT yet frozen as a contract: `0.1.0-rc.1` is a release
+//! *candidate*, published so the encoding can be exercised against a real
+//! registry before it is committed to. They freeze at `0.1.0`, and changing
+//! them after that needs a crates.io version bump — `scripts/check-leaf-deps.sh`
+//! keeps the closure registry-only precisely so that bump is the only way.
 
 use crate::Ladder;
 use content_addressable::{canonical, ContentAddressable, ContentError};

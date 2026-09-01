@@ -1,0 +1,390 @@
+# ============================================================================
+# release.yml — tag-driven release for `precedence-ladder`.
+#
+# DETERMINISTIC RELEASE GATE. Nothing is published, and no GitHub Release is
+# created, until ONE aggregator job (`release-gate`) has proven every releasable
+# condition:
+#
+#   provenance ─┐
+#   rust-gate ──┼─► release-gate ─► publish-crate ─► github-release
+#   msrv ───────┤                   (crates.io)     (the published Release)
+#   formal ─────┘
+#
+#   provenance   the version declarations agree (Cargo.toml AND Cargo.lock, via
+#                the canonical scripts/verify_release.py), the tag is exactly
+#                v<version>, the tag IS the checked-out HEAD, and that commit is
+#                contained in the protected branch `main`.
+#   rust-gate    the whole per-push gate (`just check`) re-run, PLUS the
+#                release-only supersets `--locked` and `cargo publish --dry-run`.
+#   msrv         build + test on the pinned MSRV 1.88 — the declared floor has
+#                to actually hold at the commit being released.
+#   formal       `lake build` (every Lean theorem, including the generated
+#                `decide` block re-deriving all 704 golden verdicts) plus the
+#                `sorry` gate.
+#
+# WHY `formal` IS DUPLICATED HERE. .github/workflows/formal.yml is
+# paths-filtered to `formal/**`, and it triggers on branch pushes, not on tags.
+# A tag would therefore inherit a green that was never computed for it. A
+# release that skips the proofs is not this line's release, so the release
+# workflow runs the Lean layer itself rather than trusting a badge from another
+# event. (This is the same reason ci.yml's `vectors` job has no paths filter.)
+#
+# HOOK PARITY: .githooks/pre-push mirrors what is mirrorable, and the split is
+# deliberate — read it as three groups.
+#   - ALREADY MIRRORED (via `just check`, which this workflow's `rust-gate`
+#     runs verbatim): fmt, clippy, test, doc, leaf-deps, vectors, and the
+#     `sorry` grep. The release gate is a SUPERSET of the push gate; it adds no
+#     per-push check that the hook lacks.
+#   - NEWLY MIRRORED by this workflow: `scripts/release-notes.sh`, as a drift
+#     check that the declared version has a CHANGELOG section. Pure text, no
+#     toolchain, milliseconds — so there is no excuse for it to be release-only,
+#     and catching a bump-without-an-entry at push time beats catching it after
+#     an irreversible tag.
+#   - DOCUMENTED EXCEPTIONS, release-only, each because it needs something a
+#     push hook must not require: `provenance` (a tag, which does not exist at
+#     push time), `cargo publish --dry-run` (packs and rebuilds the crate),
+#     `--locked` supersets and `msrv` (a second toolchain), `lake build` (a Lean
+#     toolchain), and `verify_release.py` (a Python interpreter — the exception
+#     ci.yml's `version-drift` job already records).
+# When editing this file, verify .githooks/pre-push still matches. Blocking
+# requirement, not a nicety.
+#
+# ACTION PINNING: every third-party action is pinned to a full commit SHA with a
+# human-readable version tag in a trailing comment. The SHA is authoritative.
+#
+# LEAST PRIVILEGE: `permissions: {}` at the workflow level. Only
+# `github-release` gets `contents: write`, and only `publish-crate` sees the
+# registry token — scoped to the protected `crates-io` environment.
+#
+# See RELEASING.md for the operator runbook and the one-time maintainer setup.
+# ============================================================================
+name: release
+
+on:
+  push:
+    tags:
+      - "v*" # e.g. v0.1.0-rc.1, v0.1.0
+  # Manual dry run: the whole gate runs (the tag-specific provenance checks
+  # relax to a no-tag drift check), but every publish job is gated on
+  # `github.event_name == 'push'`, so nothing is published and no Release is
+  # created.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # --------------------------------------------------------------------------
+  # provenance — the release-authorization seam. A tag on an out-of-band commit
+  # is rejected here, before anything is built or published.
+  # --------------------------------------------------------------------------
+  provenance:
+    name: provenance (version + tag + branch containment)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history — the ancestor check needs it
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: just
+      - name: fetch the protected branch and the tags
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --tags --force origin
+      # The canonical tool, and the ONLY implementation of the version rules:
+      # Cargo.toml and Cargo.lock agree, the SemVer <-> PEP 440 mapping
+      # self-test passes, and on a real tag, tag == v<version>.
+      - name: verify version agreement (and the tag, on a real release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            just verify-release "${GITHUB_REF_NAME}"
+          else
+            just verify-release
+          fi
+      - name: verify tag provenance (tag == HEAD, HEAD contained in main)
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          tagged="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          if [ "${tagged}" != "${head}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${tagged}, not the checked-out HEAD ${head}"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${head}" origin/main; then
+            echo "::error::tagged commit ${head} is NOT contained in the protected branch origin/main (unmerged or detached). Refusing to release."
+            exit 1
+          fi
+          echo "provenance OK: ${GITHUB_REF_NAME} -> ${head} is contained in origin/main"
+      # The release body is the CHANGELOG section verbatim, and `gh release
+      # create --notes-file` accepts an empty file happily. Prove the section
+      # exists NOW, in the job that can still stop the release, rather than
+      # discovering it in `github-release` after crates.io has already accepted
+      # an irreversible publish.
+      - name: the release notes exist (CHANGELOG section + link definitions)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # On workflow_dispatch GITHUB_REF_NAME is a BRANCH name, not a
+          # version, so fall back to the argument-less form (which reads
+          # Cargo.toml). Passing "main" here would fail for the wrong reason.
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            ./scripts/release-notes.sh "${GITHUB_REF_NAME}" > /dev/null
+          else
+            ./scripts/release-notes.sh > /dev/null
+          fi
+          echo "release notes OK: CHANGELOG.md has a section for this version"
+
+  # --------------------------------------------------------------------------
+  # rust-gate — the canonical `just check` PLUS the release-only supersets. A
+  # superset of the per-push CI gate: nothing publishable is exempt from it.
+  # --------------------------------------------------------------------------
+  rust-gate:
+    name: rust gate (just check + locked + publish dry-run)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: just
+      # fmt + clippy + test + doc + leaf + vectors + no-sorry, exactly as the
+      # push hook runs them. Not a re-spelling of the gate — the gate itself.
+      - name: canonical gate (just check) + the version drift guard
+        run: |
+          set -euo pipefail
+          just check
+          just verify-release
+      # `--locked` is the release-only part: it proves the committed lockfile
+      # resolves, which is what `cargo publish --locked` will depend on. CI runs
+      # unlocked so a dependency update surfaces as a normal red, not a release
+      # surprise.
+      - name: release-only supersets (--locked, all three feature settings)
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-default-features
+          cargo test --locked
+          cargo test --locked --all-features
+      - name: cargo publish --dry-run (from the committed lockfile)
+        run: cargo publish --locked --dry-run
+      # A published crate that omits the proofs or the vectors would make the
+      # README's claims uncheckable from the artifact a consumer actually
+      # downloads. This asserts the tarball still carries them — a `Cargo.toml`
+      # `exclude` added later cannot quietly strip them.
+      - name: the packaged tarball carries the proofs and the vectors
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A here-string, not `printf | grep -q`. `grep -q` exits on its first
+          # match, which SIGPIPEs the writer; under `set -o pipefail` that 141
+          # becomes the pipeline status and `!` inverts it into a FALSE "missing
+          # file" error. Harmless while the listing fits the pipe buffer, wrong
+          # the first time it does not — the same bug already fixed once in
+          # scripts/release-notes.sh.
+          listing="$(cargo package --list --locked)"
+          for required in \
+            formal/Precedence/Basic.lean \
+            formal/Precedence/Vectors.lean \
+            formal/lakefile.toml \
+            formal/lean-toolchain \
+            spec/vectors/ladder.json \
+            spec/vectors/newt_ladder.toml \
+            examples/gen_vectors.rs \
+            scripts/check-vectors.sh \
+            scripts/check-lean-proofs.sh
+          do
+            if ! grep -qxF "${required}" <<<"${listing}"; then
+              echo "::error::${required} is missing from the packaged crate."
+              echo "A consumer must be able to re-check the proofs and regenerate"
+              echo "the vectors from the published tarball. If dropping it is"
+              echo "deliberate, say so in RELEASING.md and update this list."
+              exit 1
+            fi
+          done
+          echo "packaged tarball OK: proofs, vectors and generator all present"
+
+  # --------------------------------------------------------------------------
+  # msrv — the declared floor must actually hold at the commit being released.
+  # --------------------------------------------------------------------------
+  msrv:
+    name: MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # 1.88
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: build + test on 1.88 (locked)
+        run: |
+          set -euo pipefail
+          cargo build --all-targets --all-features --locked
+          cargo test --all-features --locked
+          cargo test --no-default-features --locked
+
+  # --------------------------------------------------------------------------
+  # formal — the Lean layer, at the released commit. Not inherited from
+  # formal.yml: that workflow is paths-filtered and does not fire on a tag.
+  # --------------------------------------------------------------------------
+  formal:
+    name: formal (every Lean theorem, and no sorry)
+    runs-on: ${{ vars.GMF_LINUX_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The `sorry` gate runs FIRST and needs no toolchain: a tree full of stubs
+      # should go red in seconds, not after a Lean install. `lake build` exits 0
+      # on a `sorry`, which is the whole reason this step exists.
+      - name: no sorry, no native_decide
+        run: ./scripts/check-lean-proofs.sh
+      - name: install elan (Lean toolchain manager)
+        run: |
+          set -euo pipefail
+          curl -sSfL https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
+          sh elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: lake build (toolchain pinned in formal/lean-toolchain)
+        working-directory: formal
+        run: lake build
+
+  # --------------------------------------------------------------------------
+  # release-gate — the SINGLE aggregator. Both publish paths depend only on
+  # this, so a route to publishing past a red gate does not exist.
+  # --------------------------------------------------------------------------
+  release-gate:
+    name: release gate (all validation passed)
+    needs: [provenance, rust-gate, msrv, formal]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: gate summary
+        run: echo "release-gate PASSED — provenance, rust-gate, msrv and formal are green. Publication may proceed."
+
+  # --------------------------------------------------------------------------
+  # publish-crate — the crate to crates.io, `--locked` against the lockfile the
+  # rust-gate's dry run already validated. In the protected `crates-io`
+  # environment so a human gate precedes the irreversible publish.
+  #
+  # TOKEN, NOT OIDC — and not by preference. crates.io Trusted Publishing has no
+  # pending-publisher flow: configuring it requires already being an owner of an
+  # EXISTING crate, and `precedence-ladder` does not exist on crates.io yet. The
+  # first publish is therefore necessarily token-authenticated. Register trusted
+  # publishing once this rc has created the crate, then replace this step before
+  # `0.1.0` and delete the secret. RELEASING.md tracks that as an open item.
+  # --------------------------------------------------------------------------
+  publish-crate:
+    name: publish to crates.io
+    if: github.event_name == 'push'
+    needs: [release-gate]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
+  # --------------------------------------------------------------------------
+  # github-release — the step that keeps a tag from being an unfinished
+  # release. PUBLISHED, never drafted: a draft is visible only to people with
+  # write access, which is the wrong mechanism for announcing an rc. `--draft`
+  # + `generate_release_notes` is the shape that makes every tag an unfinished
+  # release by construction; do not inherit it.
+  #
+  # `--verify-tag` is load-bearing. Creating a release must NEVER mint a tag:
+  # the tag is the GPG-signed, provenance-bearing object made by the operator,
+  # and a release that conjures one produces an unsigned tag on whatever commit
+  # the release happened to name.
+  #
+  # NEEDS `publish-crate`, NOT JUST THE GATE — the ordering is deliberate. The
+  # crates.io publish sits behind a protected environment, i.e. behind a HUMAN
+  # approval that can be rejected or time out. Run this in parallel with that
+  # approval and the two failure modes are not symmetric:
+  #   - Release first, then the publish is rejected or fails => a published
+  #     Release announcing a version nobody can `cargo add`. Not recoverable by
+  #     re-running anything; the announcement is already out.
+  #   - Publish first, then this fails => a tag and a crate with no Release
+  #     yet. An unfinished release, but the recoverable kind: fix and re-run
+  #     this one idempotent job.
+  # Serializing behind the publish makes the human gate govern both halves and
+  # forces the second, recoverable failure. The cost is that the Release lands a
+  # minute later; the benefit is that it never describes a crate that is not
+  # there.
+  # --------------------------------------------------------------------------
+  github-release:
+    name: publish the GitHub Release (notes = CHANGELOG verbatim)
+    if: github.event_name == 'push'
+    needs: [release-gate, publish-crate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the Release object; nothing else
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: extract the notes and publish the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/release-notes.sh "${TAG}" > "${RUNNER_TEMP}/notes.md"
+          # SemVer says a hyphen in the version IS a prerelease. Deriving the
+          # flag from the tag means `v0.1.0` stops being a prerelease without
+          # anyone remembering to edit this file — the kind of hand-set flag
+          # that is wrong exactly once, on the release that matters.
+          flags=(--verify-tag --notes-file "${RUNNER_TEMP}/notes.md")
+          case "${TAG}" in
+            *-*) flags+=(--prerelease); echo "prerelease (SemVer prerelease tag)" ;;
+            *)   flags+=(--latest);     echo "full release" ;;
+          esac
+          # Idempotent, so a re-run after a partial failure is a re-run and not
+          # a re-tag. `create` refuses an existing release; `edit` updates it.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} exists — updating its notes"
+            # `--draft=false` is not redundant. `gh release edit` leaves
+            # `isDraft` alone unless told otherwise, so a Release drafted by any
+            # other route would get fresh notes and stay invisible to everyone
+            # without write access — while this job reported success. Publishing
+            # is the invariant; assert it on the update path too.
+            gh release edit "${TAG}" --draft=false "${flags[@]:1}"
+          else
+            gh release create "${TAG}" --title "${TAG}" "${flags[@]}"
+          fi
+          # POSITIVE READ ASSERTION. "The GitHub Release is PUBLISHED, never
+          # drafted" is the whole point of this job, and neither `create` nor
+          # `edit` fails if it ends up otherwise. Printing the state is not
+          # checking it, so check it.
+          state="$(gh release view "${TAG}" --json name,isDraft,isPrerelease,url)"
+          echo "${state}"
+          if [ "$(jq -r .isDraft <<<"${state}")" != "false" ]; then
+            echo "::error::release ${TAG} is a DRAFT. A draft is visible only to people with write access, so a pushed tag with a drafted Release is an unfinished release."
+            exit 1
+          fi

@@ -6,6 +6,12 @@
 # which carries its own parity block: its `sorry` grep IS mirrored in the hook,
 # its `lake build` is a documented CI-only exception.
 #
+# The RELEASE gate lives in .github/workflows/release.yml. It is tag-triggered
+# and is a strict superset of this file: its `rust-gate` job runs `just check`
+# — the same recipe the hook runs — and adds `--locked`, `cargo publish
+# --dry-run` and a packaged-tarball check on top. Nothing that ships is exempt
+# from what is enforced here.
+#
 # Every one of them runs in THREE feature configurations, because all three
 # ship: `--no-default-features` is the bare predicate (the configuration
 # `tests/guard.rs` proves has an EMPTY dependency closure, so it must actually

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# PIPELINE PARITY: mirrors the `fmt`, `clippy`, `test`, `doc` and `leaf-deps`
+# jobs in .github/workflows/ci.yml. When editing this file, verify it still
+# matches the CI pipeline; do not bypass it with --no-verify.
+#
+# This repo is small enough to mirror its pipeline HONESTLY — the whole gate is
+# seconds, not the ~50-minute whole-workspace hook that made `--no-verify` a
+# standing exception in newt-agent (#1098). Do not inherit that shape here: the
+# moment this hook stops being humane, people route around it and the parity is
+# fiction.
+#
+# DOCUMENTED EXCEPTIONS — one CI job is deliberately NOT run here:
+#   - `msrv` (build+test on dtolnay/rust-toolchain@1.88): installing a second
+#     toolchain on every push is too heavy for a fast hook, so the MSRV floor is
+#     guarded CI-only. The declared floor lives in Cargo.toml's `rust-version`,
+#     which this hook respects implicitly. Run it locally with `just msrv`.
+#
+# The `doc` and `leaf-deps` jobs ARE mirrored below (rustdoc is cheap, and the
+# leaf guard only reads `cargo metadata`) — true parity, not an exception.
+#
+# `exec 1>&2` is not cosmetic: a hook that writes to stdout can inject bytes
+# into git's remote-helper protocol and corrupt an HTTPS push. Everything this
+# hook prints goes to stderr.
+set -euo pipefail
+exec 1>&2
+
+echo "==> cargo fmt --check"
+cargo fmt -- --check
+
+echo "==> cargo clippy --all-targets --all-features -- -D warnings"
+cargo clippy --all-targets --all-features -- -D warnings
+
+echo "==> cargo clippy --all-targets --no-default-features -- -D warnings"
+cargo clippy --all-targets --no-default-features -- -D warnings
+
+# The bare predicate. `tests/guard.rs` asserts this configuration has an EMPTY
+# dependency closure, so it has to compile and pass on its own.
+echo "==> cargo test --no-default-features (the bare predicate)"
+cargo test --no-default-features
+
+echo "==> cargo test (default: + the 'table' feature)"
+cargo test
+
+echo "==> cargo test --all-features (+ the default-OFF 'cid' feature)"
+cargo test --all-features
+
+# Mirrors the CI `doc` job: `-D warnings` turns a broken intra-doc link into a
+# hard failure so doc rot can't return.
+echo "==> RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features"
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+
+# Mirrors the CI `leaf-deps` job: the closure must stay registry-only at every
+# feature setting. Reads only `cargo metadata` — fast.
+echo "==> ./scripts/check-leaf-deps.sh (this crate is a true leaf)"
+"$(git rev-parse --show-toplevel)/scripts/check-leaf-deps.sh"
+
+echo "pre-push checks passed."

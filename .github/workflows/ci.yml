@@ -1,0 +1,187 @@
+# HOOK PARITY: the `fmt`, `clippy`, `test`, `doc` and `leaf-deps` jobs are
+# mirrored by .githooks/pre-push. When editing those, update the push hook to
+# match — that is a blocking requirement, not a nicety.
+#
+# Every one of them runs in THREE feature configurations, because all three
+# ship: `--no-default-features` is the bare predicate (the configuration
+# `tests/guard.rs` proves has an EMPTY dependency closure, so it must actually
+# compile and pass), the default adds `table`, and `--all-features` adds the
+# default-OFF `cid` feature so its code is really compiled and tested rather
+# than merely declared.
+#
+# CI-ONLY job (a documented exception, NOT in the hook):
+#   - `msrv` pins `dtolnay/rust-toolchain` to 1.88 and runs build+test so a
+#     transitive dependency cannot silently raise the real MSRV floor above the
+#     declared `rust-version = "1.88"`. Installing a second toolchain on every
+#     push is too heavy for a fast hook, so it is CI-only; the declared floor
+#     still lives in Cargo.toml, which the hook respects implicitly.
+# The pre-push hook records that exception in its header.
+#
+# ACTION PINNING: every third-party action is pinned to a full commit SHA with a
+# human-readable version tag in a trailing comment. When bumping a pin, update
+# the trailing `# vX.Y.Z` comment to match — the SHA is authoritative, the
+# comment is for humans.
+#
+# LEAST PRIVILEGE: the default GITHUB_TOKEN is dropped to nothing at the
+# workflow level (`permissions: {}`) and each job re-grants only
+# `contents: read`. No CI job writes to the repo or publishes anything.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo build (all features)
+        run: cargo build --all-targets --all-features
+      - name: cargo build (the bare predicate)
+        run: cargo build --all-targets --no-default-features
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo test --no-default-features (the bare predicate)
+        run: cargo test --no-default-features
+      - name: cargo test (default — the 'table' feature)
+        run: cargo test
+      - name: cargo test --all-features (exercises the default-OFF 'cid')
+        run: cargo test --all-features
+
+  msrv:
+    name: msrv (1.88)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Pin the declared MSRV floor. If a transitive dependency starts requiring
+      # a newer Rust, THIS job fails — surfacing an MSRV bump as an intentional,
+      # SemVer-relevant change instead of a silent drift. It has already earned
+      # its keep once: the floor was drafted as 1.85 and this job found that the
+      # OPTIONAL `cid` graph (content-addressable -> ipld-core -> cid ->
+      # multibase -> base45 3.2, `slice_as_chunks`) really needs 1.88. None of
+      # OUR code does; see the Cargo.toml comment.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # 1.88
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo build (MSRV 1.88, all features)
+        run: cargo build --all-targets --all-features
+      - name: cargo test (MSRV 1.88, all features)
+        run: cargo test --all-features
+      - name: cargo test (MSRV 1.88, the bare predicate)
+        run: cargo test --no-default-features
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo clippy (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: cargo clippy (the bare predicate)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+  doc:
+    name: doc (intra-doc links)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # `-D warnings` turns a broken intra-doc link into a hard CI failure so
+      # doc rot can't return — public API surface hygiene.
+      - name: cargo doc (deny warnings)
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt -- --check
+
+  leaf-deps:
+    name: leaf-deps (this crate is a true leaf)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      # No build cache and no compilation: the guard only reads `cargo
+      # metadata`, asserting the resolved dependency closure is registry-only
+      # (no path/git/workspace edges) at every feature setting, so any repo can
+      # depend on this crate without cycles.
+      - name: check this crate is a true leaf
+        run: ./scripts/check-leaf-deps.sh
+
+  version-drift:
+    name: version-drift (declarations agree)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `scripts/verify_release.py` is the SINGLE source of the SemVer <-> PEP
+      # 440 mapping the C3 release gate will use. Running its self-test and its
+      # drift check here means the mapping cannot rot between releases and be
+      # discovered at publish time. Pure Python, no toolchain, seconds.
+      #
+      # HOOK PARITY EXCEPTION: not in .githooks/pre-push, so a push never
+      # requires a Python interpreter. It is a drift check on files that only
+      # change at a version bump, and `just verify-release` runs it on demand.
+      - name: verify_release self-test and version drift
+        run: |
+          python3 scripts/verify_release.py --self-test
+          python3 scripts/verify_release.py

@@ -15,8 +15,17 @@ It proves:
 The declarations it reads:
 
   * ``Cargo.toml``                     -> ``[package].version``  (REQUIRED — the core crate)
+  * ``Cargo.lock``                     -> this crate's own ``[[package]].version`` (REQUIRED)
   * ``precedence-ladder-py/Cargo.toml``-> ``[package].version``  (optional — the PyO3 binding, C3)
   * ``pyproject.toml``                 -> ``[project].version``  (optional — the Python distribution, C3)
+
+``Cargo.lock`` is checked because this repo **commits its lockfile** (see
+``.gitignore``) and the release publishes ``--locked``. A bump that edits
+``Cargo.toml`` without refreshing the lock makes ``cargo publish --locked``
+fail at the last, irreversible step of the release instead of here, at the
+first — and a stale lock is exactly what a hand-edited version bump produces.
+The crate name is read from ``Cargo.toml`` rather than hardcoded, so there is
+one spelling of it, not two.
 
 **The optional two are checked when the file exists and skipped when it does
 not**, so slice C3 adds them without editing this script — and so a C1 run is
@@ -43,6 +52,7 @@ import argparse
 import os
 import sys
 import re
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -50,6 +60,7 @@ from pathlib import Path
 ROOT_CARGO = ("Cargo.toml", ("package", "version"), True)
 PY_CARGO = ("precedence-ladder-py/Cargo.toml", ("package", "version"), False)
 PYPROJECT = ("pyproject.toml", ("project", "version"), False)
+CARGO_LOCK = "Cargo.lock"
 
 # SemVer prerelease identifier -> PEP 440 prerelease letter.
 _PRERELEASE = {"alpha": "a", "beta": "b", "rc": "rc"}
@@ -114,6 +125,35 @@ def _read_version(root: Path, rel: str, keys: tuple[str, ...]) -> str:
     return node
 
 
+def _read_lock_version(root: Path, crate: str) -> str:
+    """Return this crate's own version as recorded in the committed ``Cargo.lock``.
+
+    Fails closed on a missing lockfile, a lockfile that does not mention this
+    crate at all, and — the case that actually matters — a lockfile that
+    mentions it more than once, which would make "the" locked version
+    ambiguous.
+    """
+    path = root / CARGO_LOCK
+    if not path.is_file():
+        raise VerifyError(f"missing version file: {CARGO_LOCK}")
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise VerifyError(f"unparsable TOML in {CARGO_LOCK}: {exc}") from exc
+    found = [
+        pkg.get("version")
+        for pkg in data.get("package", [])
+        if isinstance(pkg, dict) and pkg.get("name") == crate
+    ]
+    if not found:
+        raise VerifyError(f"{CARGO_LOCK} has no [[package]] entry for {crate!r}")
+    if len(found) > 1:
+        raise VerifyError(f"{CARGO_LOCK} has {len(found)} entries for {crate!r}: {found!r}")
+    if not isinstance(found[0], str):
+        raise VerifyError(f"version for {crate!r} in {CARGO_LOCK} is not a string: {found[0]!r}")
+    return found[0]
+
+
 def verify(root: Path, tag: str | None, require_all: bool = False) -> list[str]:
     """Return a list of problems; an empty list means the release is consistent."""
     problems: list[str] = []
@@ -140,6 +180,20 @@ def verify(root: Path, tag: str | None, require_all: bool = False) -> list[str]:
             f"Rust version disagreement: Cargo.toml={rust!r} != "
             f"{PY_CARGO[0]}={versions['py-cargo']!r}"
         )
+
+    # 1b. The committed lockfile must record the same version. The release
+    #     publishes `--locked`, so a stale lock is a failure at the last
+    #     irreversible step unless it is caught here at the first.
+    try:
+        crate = _read_version(root, ROOT_CARGO[0], ("package", "name"))
+        locked = _read_lock_version(root, crate)
+        if locked != rust:
+            problems.append(
+                f"Cargo.lock records {crate} = {locked!r} but Cargo.toml declares "
+                f"{rust!r} — run `cargo check` and commit the refreshed lockfile"
+            )
+    except VerifyError as exc:
+        problems.append(str(exc))
 
     # 2. pyproject, when present, must be the canonical PEP 440 of the Rust
     #    version. The mapping is validated even when pyproject is absent, so a
@@ -203,7 +257,28 @@ def self_test() -> int:
         except VerifyError:
             continue
         raise AssertionError(f"{bad!r} was accepted and mapped to {mapped!r}")
-    print("verify_release self-test OK (14 mapping cases)")
+
+    # ANTI-VACUOUS TWIN for the lockfile check. A drift guard that never fires
+    # is a green light over an unchecked tree, so prove it fires: the same
+    # synthetic repo passes with an agreeing lock and fails with a stale one.
+    # Written to a temp dir, so it cannot be satisfied by the real repo
+    # happening to be consistent at the moment the self-test runs.
+    manifest = '[package]\nname = "widget"\nversion = "9.9.9"\n'
+    lock_tmpl = '[[package]]\nname = "widget"\nversion = "%s"\n'
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp)
+        (fake / "Cargo.toml").write_text(manifest, encoding="utf-8")
+        (fake / "Cargo.lock").write_text(lock_tmpl % "9.9.9", encoding="utf-8")
+        agreeing = verify(fake, None)
+        assert agreeing == [], f"agreeing lock reported problems: {agreeing!r}"
+        (fake / "Cargo.lock").write_text(lock_tmpl % "9.9.8", encoding="utf-8")
+        stale = verify(fake, None)
+        assert any("Cargo.lock" in p for p in stale), f"stale lock went unreported: {stale!r}"
+        (fake / "Cargo.lock").write_text('[[package]]\nname = "other"\nversion = "1.0.0"\n')
+        absent = verify(fake, None)
+        assert any("no [[package]]" in p for p in absent), f"absent crate unreported: {absent!r}"
+
+    print("verify_release self-test OK (14 mapping cases + 3 lockfile cases)")
     return 0
 
 

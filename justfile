@@ -1,16 +1,17 @@
 # justfile for precedence-ladder.
 #
 # `just check` runs the full local gate (fmt + clippy + test + doc + leaf +
-# no-sorry), the same steps enforced by .githooks/pre-push and
+# vectors + no-sorry), the same steps enforced by .githooks/pre-push and
 # .github/workflows/ci.yml. Two checks are intentionally not in `check`, both
 # needing an extra toolchain: `msrv` (1.88) and `lean` (`lake build`). Run them
 # with `just msrv` and `just lean`.
 
-# Run the full local check suite: format, lint, test, doc, leaf guard, sorry gate.
+# Run the full local check suite: format, lint, test, doc, leaf guard, vectors.
 #
-# `lean` is deliberately NOT here — see the `lean` recipe's comment. `no-sorry`
-# is, because it is a grep and it gates a real hole.
-check: fmt clippy test doc leaf no-sorry
+# `lean` is deliberately NOT here — see the `lean` recipe's comment and the
+# pre-push hook header. `vectors` and `no-sorry` are, because both are cheap and
+# both gate real drift.
+check: fmt clippy test doc leaf vectors no-sorry
 
 # Verify formatting (does not modify files).
 fmt:
@@ -47,6 +48,23 @@ doc:
 # pre-push hook; reads only `cargo metadata`, so it is fast.
 leaf:
     ./scripts/check-leaf-deps.sh
+
+# Regenerate the golden vectors from the Rust truth table.
+#
+# Writes `spec/vectors/ladder.json` (data, for the C3 Python consumer) and
+# `formal/Precedence/Vectors.lean` (a `decide` block, because a Mathlib-free
+# Lean has no JSON reader). Both are GENERATED — never hand-edit them; run this
+# and commit the result.
+gen-vectors:
+    cargo run --quiet --example gen_vectors --features cid,table -- .
+
+# Assert the checked-in vectors match a fresh run.
+#
+# This is the ONLY thing tying the Lean proofs to the shipped Rust: the theorems
+# in `formal/Precedence/Basic.lean` are about the Lean model, and nothing in
+# Lean reads `src/lib.rs`.
+vectors:
+    ./scripts/check-vectors.sh
 
 # The `sorry` gate.
 #

@@ -1,0 +1,48 @@
+# The demo ladder — newt's Esc/Ctrl-C table, and the ONLY input to the golden
+# vectors.
+#
+# This file is the single source of the demo table. `tests/truth_table.rs` walks
+# it, `examples/gen_vectors.rs` generates `ladder.json` and the Lean `decide`
+# block from it, and slice C3's Python conformance script will re-derive the
+# same vectors from it. Editing it changes every one of those, which is exactly
+# what `just check-vectors` is there to notice.
+#
+# It is a DEMO, not a shipped policy: the crate has no opinion about Esc. The
+# claimant names are newt's because that is where the ladder was extracted from,
+# and because a table nobody actually uses is the kind of fixture that drifts
+# into fiction.
+#
+# No `modal` rung, deliberately: it could never be live in newt (the presenter
+# blocks inside `handle_request` and never reaches its key poll), and a rung
+# that can never fire makes a conformance test pass on a constant.
+schema = 1
+fallthrough = ["esc"]
+
+[hatch]
+action = "interrupt"
+reserved = ["ctrl-c"]
+
+[[rung]]
+claimant = "palette"
+triggers = ["esc"]
+action = "close palette"
+
+[[rung]]
+claimant = "vi-confirm"
+triggers = ["esc"]
+action = "cancel [y/N]"
+
+[[rung]]
+claimant = "vi-ex"
+triggers = ["esc"]
+action = "cancel :"
+
+[[rung]]
+claimant = "vi-insert"
+triggers = ["esc"]
+action = "NORMAL"
+
+[[rung]]
+claimant = "vi-pending"
+triggers = ["esc"]
+action = "cancel operator"

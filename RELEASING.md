@@ -118,6 +118,11 @@ releases and surprise a publish.
    just lean                         # every Lean theorem (needs a Lean toolchain)
    ```
 
+   `release-dryrun` needs a **clean working tree**: `cargo package` refuses to
+   pack uncommitted changes, and rightly so — the tarball is built from what git
+   has, so a rehearsal against a dirty tree would rehearse the wrong bytes.
+   Commit first; do not reach for `--allow-dirty`.
+
    A dry run of the whole CI gate (publishing nothing, creating no Release) is
    also available from **Actions → release → Run workflow**.
 
@@ -150,9 +155,18 @@ releases and surprise a publish.
 8. **Verify from outside**, not from the workflow's green:
 
    ```sh
-   curl -s https://crates.io/api/v1/crates/precedence-ladder | python3 -c 'import json,sys; print(json.load(sys.stdin)["crate"]["max_version"])'
+   # Ask for the EXACT version, not `max_version`: crates.io reports
+   # `max_stable_version` separately, and a prerelease is exactly the case
+   # where the two disagree. 200 means published; 404 means it is not there.
+   curl -so /dev/null -w '%{http_code}\n' \
+     https://crates.io/api/v1/crates/precedence-ladder/0.1.0-rc.1
    gh release view v0.1.0-rc.1 --json name,isDraft,isPrerelease,url
+   git tag -v v0.1.0-rc.1     # "Good signature" — from the remote's copy after a fresh clone
    ```
+
+   Done means all three: the registry has the version, the Release renders with
+   `isDraft=false`, and the tag verifies. A pushed tag with no *published*
+   Release is an unfinished release.
 
 **The GitHub Release is PUBLISHED, never drafted** — `--prerelease` for an rc,
 which the workflow derives from the tag containing a SemVer prerelease hyphen
